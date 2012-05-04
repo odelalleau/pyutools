@@ -42,10 +42,11 @@ class DebugOp(theano.gof.Op):
 
         :param condition: A function that, when evaluated on this Op's input,
         should return a boolean. If its returned value is True, then the
-        `action` function is run.
+        `action` function is run. Default behavior is to always return True.
 
         :param action: The function to execute when `condition` is True. It is
-        executed with the Op's input as input.
+        executed with the Op's input as input. Default behavior is to do
+        nothing.
         """
         self.condition = condition
         self.action = action
@@ -65,8 +66,7 @@ class DebugOp(theano.gof.Op):
     def perform(self, node, inputs, outputs):
         x = inputs[0]
         x = x.copy()
-        if (self.condition is not None and
-            self.condition(x) and
+        if ((self.condition is None or self.condition(x)) and
             self.action is not None):
             # Run the action.
             self.action(x)
