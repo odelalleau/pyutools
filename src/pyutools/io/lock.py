@@ -203,7 +203,10 @@ class Lock(object):
                 # Someone is already holding the lock.
                 logger.debug('Lock held by %s for %s seconds (I am %s)' %
                              (lock_id, age, self.lock_id))
-                if self.timeout >= 0 and age > self.timeout:
+                # Note that we also delete locks that are more than one hour
+                # into the future, because it means they must be bugged
+                # somehow.
+                if self.timeout >= 0 and (age > self.timeout or -age > 3600):
                     # Delete outdated lock.
                     # Note that we specify the lock ID, because someone else
                     # may actually delete and create a new lock at the same
