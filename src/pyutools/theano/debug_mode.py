@@ -35,7 +35,7 @@ class DebugMode(theano.compile.mode.Mode):
     Its default behavior is to behave like the 'FAST_RUN' mode.
     """
 
-    def __init__(self, pre_func=None, post_func=None):
+    def __init__(self, pre_func=None, post_func=None, optimizer='fast_run'):
         """
         Constructor.
 
@@ -47,12 +47,15 @@ class DebugMode(theano.compile.mode.Mode):
 
         :param post_func: A function to call after executing a thunk, with same
         arguments as `pre_func`.
+
+        :param optimizer: The optimizer to use. One may use for instance
+        'fast_compile' to skip optimizations.
         """
         self.pre_func = pre_func
         self.post_func = post_func
         wrap_linker = theano.gof.WrapLinkerMany([theano.gof.OpWiseCLinker()],
                                                 [self.eval])
-        super(DebugMode, self).__init__(wrap_linker, optimizer='fast_run')
+        super(DebugMode, self).__init__(wrap_linker, optimizer=optimizer)
 
     def eval(self, i, node, fn):
         """
