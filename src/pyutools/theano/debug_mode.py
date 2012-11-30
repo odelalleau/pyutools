@@ -23,6 +23,8 @@
 
 """
 A debug Theano mode.
+
+Note that this mode is now integrated into Theano as 'MonitorMode'.
 """
 
 import theano
@@ -59,7 +61,7 @@ class DebugMode(theano.compile.mode.Mode):
 
     def eval(self, i, node, fn):
         """
-        The method that calls the the thunk `fn`.
+        The method that calls the thunk `fn`.
         """
         node.debug_thunk = fn
         if self.pre_func is not None:
