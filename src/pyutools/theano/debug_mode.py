@@ -27,6 +27,8 @@ A debug Theano mode.
 Note that this mode is now integrated into Theano as 'MonitorMode'.
 """
 
+import warnings
+
 import theano
 
 
@@ -53,6 +55,8 @@ class DebugMode(theano.compile.mode.Mode):
         :param optimizer: The optimizer to use. One may use for instance
         'fast_compile' to skip optimizations.
         """
+        warnings.warn('The pyutools `DebugMode` mode is deprecated: instead, '
+                      'use `MonitorMode` found in theano.compile.monitormode')
         self.pre_func = pre_func
         self.post_func = post_func
         wrap_linker = theano.gof.WrapLinkerMany([theano.gof.OpWiseCLinker()],
