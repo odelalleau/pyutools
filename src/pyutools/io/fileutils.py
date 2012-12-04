@@ -27,11 +27,27 @@ Miscellaneous file utility functions.
 """
 
 
-__all__ = ['is_same_file']
+__all__ = ['copy_link', 'is_same_file', 'md5']
 
 
 import hashlib
 import os
+
+
+def copy_link(src, dst):
+    """
+    Copy a symbolic link.
+
+    :param src: The source symbolic link.
+
+    :param dst: The destination symbolic link.
+    """
+    if not os.path.islink(src):
+        raise OSError('Not a symbolic link: %s' % src)
+    if os.path.exists(dst):
+        raise OSError('Destination already exists: %s' % dst)
+    link_info = os.readlink(src)
+    os.symlink(link_info, dst)
 
 
 def is_same_file(f1, f2):
