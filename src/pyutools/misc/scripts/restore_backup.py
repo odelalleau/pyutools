@@ -59,9 +59,13 @@ def main():
         level = logging.DEBUG
     else:
         raise ValueError('Invalid value for verbosity: %s' % args.verbosity)
+    if args.log is None:
+        out = sys.stdout
+    else:
+        out = args.log
     logger = pyutools.io.get_logger(
             name='pyutools.misc.scripts.restore_backup',
-            out='stdout',
+            out=out,
             level=level)
     # Verify that archive is empty.
     if args.archive is not None:
@@ -91,6 +95,7 @@ def parse_arguments():
                         required=True)
     parser.add_argument('--destination', help='Folder we want to restore files into',
                         required=True)
+    parser.add_argument('--log', help='Output to this log file instead of stdout')
     parser.add_argument('--move', action='store_true',
                         help='Specify that restored files should be moved '
                              'rather than copied')
