@@ -48,8 +48,8 @@ def get_logger(name, level=None, out=None):
     
     :param out: Where do we want this logger to output information, among:
         - `None`: Do not assign any output to this logger.
-        - 'stdout': Output to stdout stream.
-        - 'stderr': Output to stderr stream.
+        - A string (path to a file): Log to this file.
+        - A stream (like `sys.stdout` or `sys.stderr`): Log to this stream.
     """
     if name not in _loggers:
         # Actually create the logger.
@@ -57,13 +57,10 @@ def get_logger(name, level=None, out=None):
         if level is not None:
             logger.setLevel(level)
         if out is not None:
-            if out == 'stdout':
-                handler = logging.StreamHandler(sys.stdout)
-            elif out == 'stderr':
-                handler = logging.StreamHandler(sys.stderr)
+            if isinstance(out, basestring):
+                handler = logging.FileHandler(out)
             else:
-                raise ValueError('Invalid value for \'out\' argument: %s' %
-                                 out)
+                handler = logging.StreamHandler(out)
             if level is not None:
                 handler.setLevel(level)
             logger.addHandler(handler)
