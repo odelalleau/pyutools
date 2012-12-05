@@ -102,6 +102,38 @@ def parse_arguments():
     return parser.parse_args()
 
 
+def restore_symlink(src, dst, logger):
+    """
+    Handle the restoration of a symlink.
+
+    :param src: The source symlink to be restored.
+
+    :param dst: The destination path for the restored symlink.
+
+    :param logger: Logger to use for output.
+
+    :return: 0 on success, or 1 if a conflict was found.
+    """
+    rval = 0
+    assert os.path.islink(src)
+    if os.path.lexists(dst):
+        if os.path.islink(dst):
+            # Are they the same links?
+            if os.readlink(src) == os.readlink(dst):
+                logger.debug(
+                        'Skipping existing identical symlink: '
+                        '%s == %s' % (src, dst))
+            else:
+                rval = 1
+        else:
+            rval = 1
+    else:
+        # Copy symlink.
+        logger.debug('Restoring symlink: %s -> %s' % (src, dst))
+        pyutools.io.copy_link(src, dst)
+    return rval
+
+
 def run(args, logger):
     """
     Perform the restoration.
@@ -112,18 +144,41 @@ def run(args, logger):
 
     :return: 0 on success, non-zero integer on failure.
     """
-    logger.debug('Restoring %s -> %s' % (args.source, args.destination))
+    logger.debug('Starting restore process %s -> %s' %
+                 (args.source, args.destination))
     for check_dir in ('source', 'destination'):
         if not os.path.isdir(getattr(args, check_dir)):
             logger.error('%s argument is not an existing folder: %s' %
                          (check_dir.capitalize(), getattr(args, check_dir)))
             return 1
+
     # List of files for which a conflict was detected.
     conflicts = []
+    # List of exceptions raised during the walk.
+    exceptions = []
+
+    def add_conflict(f_path, f_dest):
+        logger.debug('Conflict detected: %s != %s' % (f_path, f_dest))
+        conflicts.append(f_path)
+
+    def walk_error(exc):
+        """
+        Called when an exception is raised during the walk.
+        """
+        exc_str = str(exc)
+        logger.debug('Exception during walk: %s' % exc_str)
+        exceptions.append(exc_str)
+
+    # List of files whose restoration failed.
+    failed_files = []
+    # List of directories whose restoration failed.
+    failed_dirs = []
     # Set of directories already fully restored "as is". It is used to be more
     # efficient, by avoiding the need to check their content.
+    # Note that this set also contains directories found in `failed_dirs`.
     restored_dirs = set()
-    for dir_path, dir_names, file_names in os.walk(args.source):
+    for dir_path, dir_names, file_names in os.walk(args.source,
+                                                   onerror=walk_error):
         if dir_path in restored_dirs:
             # This folder has already been fully restored.
             logger.debug('Skipping folder already restored: %s' % dir_path)
@@ -138,7 +193,7 @@ def run(args, logger):
             arch_path = None
 
         # Create destination directory if needed.
-        if not os.path.exists(dest_path):
+        if not os.path.lexists(dest_path):
             logger.debug('Creating folder: %s' % dest_path)
             os.mkdir(dest_path)
         else:
@@ -150,14 +205,28 @@ def run(args, logger):
         # Examine files.
         for f_name in file_names:
             f_path = os.path.join(dir_path, f_name)
-            if os.path.islink(f_path):
-                logger.error('Symbolic links are not currently supported: %s' %
-                             f_path)
-                return 1
-            assert os.path.isfile(f_path)
             f_dest = os.path.join(dest_path, f_name)
-            if os.path.exists(f_dest):
-                if pyutools.io.is_same_file(f_path, f_dest):
+            # Symbolic links are handled in a specific way.
+            if os.path.islink(f_path):
+                if restore_symlink(f_path, f_dest, logger) != 0:
+                    add_conflict(f_path, f_dest)
+            elif not os.path.isfile(f_path):
+                logger.debug('Failed to restore broken file: %s' % f_path)
+                failed_files.append(f_path)
+            elif os.path.islink(f_dest):
+                # Source is not a link but destination is.
+                add_conflict(f_path, f_dest)
+            elif os.path.lexists(f_dest):
+                if not pyutools.io.can_read_file(f_path):
+                    logger.debug('Cannot read source file: %s' % f_path)
+                    failed_files.append(f_path)
+                elif (os.path.isfile(f_dest) and
+                      not pyutools.io.can_read_file(f_dest)):
+                    logger.debug('Cannot read destination file: %s' % f_dest)
+                    failed_files.append(f_path)
+                elif (os.path.isfile(f_dest) and
+                      pyutools.io.is_same_file(f_path, f_dest)):
+                    # This is the same file.
                     logger.debug('Skipping existing identical file: %s == %s' %
                                  (f_path, f_dest))
                     if args.move:
@@ -169,44 +238,87 @@ def run(args, logger):
                             logger.debug('Moving to archive: %s -> %s' %
                                          (f_path, f_arch))
                             arch_dir = os.path.dirname(f_arch)
-                            if not os.path.exists(arch_dir):
+                            if not os.path.lexists(arch_dir):
                                 os.makedirs(arch_dir)
                             shutil.move(f_path, f_arch)
                 else:
                    # We have a conflict.
-                   logger.debug('Conflict detected: %s != %s' %
-                                (f_path, f_dest))
-                   conflicts.append(f_path)
+                   add_conflict(f_path, f_dest)
             else:
                 # File does not exist: we restore it.
                 logger.debug('Restoring: %s -> %s' % (f_path, f_dest))
-                if args.move:
-                    shutil.move(f_path, f_dest)
-                else:
-                    shutil.copy2(f_path, f_dest)
+                try:
+                    if args.move:
+                        shutil.move(f_path, f_dest)
+                    else:
+                        shutil.copy2(f_path, f_dest)
+                except Exception:
+                    logger.debug('Failed to restore file: %s' % f_path)
+                    failed_files.append(f_path)
 
         # Examine folders.
         for d_name in dir_names:
             d_path = os.path.join(dir_path, d_name)
-            assert not os.path.islink(d_path)
-            assert os.path.isdir(d_path)
             d_dest = os.path.join(dest_path, d_name)
-            if os.path.exists(d_dest):
-                logger.debug('Folder already exists, will recurse into it: %s'
-                             % d_dest)
-            else:
-                logger.debug('Restoring: %s -> %s' % (d_path, d_dest))
-                if args.move:
-                    shutil.move(d_path, d_dest)
+
+            if os.path.islink(d_path):
+                if restore_symlink(d_path, d_dest, logger) != 0:
+                    add_conflict(f_path, f_dest)
+
+            elif os.path.islink(d_dest):
+                # Source is not a link but destination is.
+                add_conflict(d_path, d_dest)
+
+            elif os.path.lexists(d_dest):
+                assert os.path.isdir(d_path)
+                if os.path.isdir(d_dest):
+                    # If it is an existing folder then we will walk into it at
+                    # some point: nothing needs to be done here.
+                    logger.debug('Folder already exists, will recurse into it: '
+                                 '%s' % d_dest)
                 else:
-                    shutil.copytree(d_path, d_dest, symlinks=True)
+                    logger.debug('Failed to restore directory because '
+                                 'destination exists but is not a directory: '
+                                 '%s' % d_dest)
+                    failed_dirs.append(d_path)
+            else:
+                assert os.path.isdir(d_path)
+                logger.debug('Restoring: %s -> %s' % (d_path, d_dest))
+                try:
+                    if args.move:
+                        shutil.move(d_path, d_dest)
+                    else:
+                        shutil.copytree(d_path, d_dest, symlinks=True)
+                except Exception:
+                    logger.debug('Failed to restore directory: %s' % d_path)
+                    failed_dirs.append(d_path)
                 restored_dirs.add(d_path)
 
-    if conflicts:
-        logger.info('The following files are in conflict and thus were not '
-                    'restored:\n  %s' % '\n  '.join(conflicts))
+    rval = 0
+    if failed_files:
+        logger.warning('The following files could not be restored '
+                       '(maybe you do not have proper permissions): '
+                       '\n  %s' % '\n  '.join(sorted(failed_files)))
+        rval = 1
 
-    return 0
+    if failed_dirs:
+        logger.warning('The following folders could not be fully restored '
+                       '(maybe you do not have proper permissions): '
+                       '\n  %s' % '\n  '.join(sorted(failed_dirs)))
+        rval = 1
+
+    if conflicts:
+        logger.warning('The following files are in conflict and thus were not '
+                       'restored:\n  %s' % '\n  '.join(conflicts))
+        rval = 1
+
+    if exceptions:
+        logger.warning('The following exceptions were raised during the walk:'
+                       '\n  %s' % '\n  '.join(sorted(exceptions)))
+        rval = 1
+
+    return rval
+
 
 if __name__ == '__main__':
     sys.exit(main())
