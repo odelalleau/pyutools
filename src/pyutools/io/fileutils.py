@@ -27,11 +27,37 @@ Miscellaneous file utility functions.
 """
 
 
-__all__ = ['copy_link', 'is_same_file', 'md5']
+__all__ = ['can_read_file', 'copy_link', 'is_same_file', 'md5']
 
 
 import hashlib
 import os
+
+
+def can_read_file(path):
+    """
+    Check whether we can read the given file.
+
+    Note that this function does not check the file permission flags: instead,
+    it directly attempts to read one byte from the file.
+
+    :param path: Path to the file to check.
+
+    :return: True if we can read this file, and False otherwise.
+    """
+    assert os.path.isfile(path)
+    try:
+        f_in = open(path, 'rb')
+    except Exception:
+        return False
+    try:
+        try:
+            f_in.read(1)
+            return True
+        except Exception:
+            return False
+    finally:
+        f_in.close()
 
 
 def copy_link(src, dst):
