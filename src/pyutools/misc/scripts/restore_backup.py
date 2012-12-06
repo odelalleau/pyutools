@@ -76,7 +76,13 @@ def main():
                 'continue?' % args.archive)):
                 # Abort if user asks for it.
                 return 1
-    return run(args, logger)
+    rval = run(args, logger)
+    if rval == 0:
+        logger.info('Restoration was successful')
+    else:
+        logger.warn('Restoration could not be fully performed (error code: %s)'
+                    % rval)
+    return rval
 
 
 def parse_arguments():
@@ -200,7 +206,12 @@ def run(args, logger):
         # Create destination directory if needed.
         if not os.path.lexists(dest_path):
             logger.debug('Creating folder: %s' % dest_path)
-            os.mkdir(dest_path)
+            try:
+                os.mkdir(dest_path)
+            except Exception:
+                logger.debug('Unable to create folder: %s' % dest_path)
+                failed_dirs.append(dir_path)
+                continue
         else:
             if not os.path.isdir(dest_path):
                 logger.error('Destination folder exists but is not a folder: '
