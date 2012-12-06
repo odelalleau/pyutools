@@ -123,7 +123,7 @@ def restore_symlink(src, dst, logger):
 
     :param logger: Logger to use for output.
 
-    :return: 0 on success, or 1 if a conflict was found.
+    :return: 0 on success, 1 if a conflict was found, 2 if an error occurred.
     """
     rval = 0
     assert os.path.islink(src)
@@ -135,13 +135,21 @@ def restore_symlink(src, dst, logger):
                         'Skipping existing identical symlink: '
                         '%s == %s' % (src, dst))
             else:
+                logger.debug('The destination symlink already exists and is '
+                             'not the same: %s' % dst)
                 rval = 1
         else:
+            logger.debug('The destination path already exists and is not a '
+                         'symlink: %s' % dst)
             rval = 1
     else:
         # Copy symlink.
         logger.debug('Restoring symlink: %s -> %s' % (src, dst))
-        pyutools.io.copy_link(src, dst)
+        try:
+            pyutools.io.copy_link(src, dst)
+        except Exception:
+            logger.debug('Failed to restore symlink: %s' % src)
+            rval = 2
     return rval
 
 
@@ -224,8 +232,13 @@ def run(args, logger):
             f_dest = os.path.join(dest_path, f_name)
             # Symbolic links are handled in a specific way.
             if os.path.islink(f_path):
-                if restore_symlink(f_path, f_dest, logger) != 0:
+                rcode = restore_symlink(f_path, f_dest, logger)
+                if rcode == 1:
                     add_conflict(f_path, f_dest)
+                elif rcode == 2:
+                    failed_files.append(f_path)
+                else:
+                    assert rcode == 0
             elif not os.path.isfile(f_path):
                 logger.debug('Failed to restore broken file: %s' % f_path)
                 failed_files.append(f_path)
@@ -278,8 +291,13 @@ def run(args, logger):
             d_dest = os.path.join(dest_path, d_name)
 
             if os.path.islink(d_path):
-                if restore_symlink(d_path, d_dest, logger) != 0:
-                    add_conflict(f_path, f_dest)
+                rcode = restore_symlink(d_path, d_dest, logger)
+                if rcode == 1:
+                    add_conflict(d_path, d_dest)
+                elif rcode == 2:
+                    failed_dirs.append(d_path)
+                else:
+                    assert rcode == 0
 
             elif os.path.islink(d_dest):
                 # Source is not a link but destination is.
