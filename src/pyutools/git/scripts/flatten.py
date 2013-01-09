@@ -35,6 +35,22 @@ import sys
 
 
 import pyutools
+from pyutools.misc.util import execute
+
+
+def get_root_commits():
+    """
+    Return the list of root commits in the repository.
+
+    If unable to find any or if an error occurs, an empty list is returned.
+    Note that a repository may have multiple root commits (this is why the
+    returned value is a list).
+    """
+    rcode, stdout = execute('git rev-list --max-parents=0 HEAD',
+                            return_stdout=True)
+    if rcode != 0:
+        return []
+    return [s.strip() for s in stdout]
 
 
 def main():
@@ -60,7 +76,8 @@ def parse_arguments():
     """
     parser = argparse.ArgumentParser(
             description=(
-                'Flatten Git history.'))
+                'Flatten Git history. This script must be run from the root '
+                'directory of a Git repository.'))
     parser.add_argument('--verbosity', help='Verbosity level (0 to 2, default 1)',
                         type=int, default=1)
     parser.add_argument('--log', help='Output to this log file instead of stdout')
@@ -77,6 +94,26 @@ def run(args, logger):
 
     :return: 0 on success, non-zero integer on failure.
     """
+    # Ensure we are at the root of a Git repository.
+    if not os.path.isdir('.git'):
+        raise RuntimeError(
+            'Unable to find a .git folder in current working directory. You '
+            'must run this script from the root of a Git repository.')
+
+    # Identify the repository root. Currently we only support a single root.
+    roots = get_root_commits()
+    if len(roots) > 1:
+        raise NotImplementedError(
+            'Found multiple root commits in this repository. Current '
+            'implementation only supports a single root commit.')
+    if len(roots) == 0:
+        raise RuntimeError('Unable to find the root commit.')
+    assert len(roots) == 1
+    root = roots[0]
+    logger.debug('Found root commit: %s' % root)
+
+    # Initialize recursion: flatten from first commit to HEAD.
+
     return 0
 
 

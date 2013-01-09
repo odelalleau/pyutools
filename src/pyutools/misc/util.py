@@ -29,10 +29,89 @@ Miscellaneous utility functions used in various places in pyutools.
 """
 
 
-__all__ = ['verbosity_to_log_level']
+__all__ = [
+    'execute',
+    'verbosity_to_log_level',
+    ]
 
 
 import logging
+import subprocess
+
+
+def execute(cmd, return_code=True, return_stdout=False, return_stderr=False,
+            show_stdout=True, show_stderr=True):
+    """
+    Run a system command.
+
+    :param cmd: The command to be run, either as a string or as a list of
+    strings. If it is a string, it is split very naively (using blank spaces as
+    separators), which only works if individual arguments do not contain blank
+    spaces.
+
+    :param return_code: Whether to return the command's return code.
+
+    :param return_stdout: Whether to return the command's stdout.
+
+    :param return_stderr: Whether to return the command's stderr.
+
+    :param show_stdout: Whether the command's stdout should be printed to the
+    standard output. Automatically set to False when `return_stdout` is True.
+
+    :param show_stderr: Whether the command's stderr should be printed to the
+    standard output. Automatically set to False when `return_stderr` is True.
+
+    :return: If only one of the `return_*` arguments is True, then the
+    corresponding item is returned. If multiple `return_*` arguments are True,
+    then return a list with the corresponding items. The order of the items is
+    always the same as in (return code, stdout, sterr).
+    Note that stdout and stderr are output as list of strings, where each
+    string is a line of the output. Trailing empty lines are omitted.
+    """
+    if not isinstance(cmd, (basestring, list)):
+        raise TypeError('The `cmd` argument must be a string or a list of '
+                        'strings')
+    if isinstance(cmd, basestring):
+        cmd = cmd.split(' ')
+    # Set up the stdout / stderr for this command.
+    if return_stdout:
+        stdout = subprocess.PIPE
+    elif show_stdout:
+        stdout = None
+    else:
+        stdout = os.devnull()
+    if return_stderr:
+        stderr = subprocess.PIPE
+    elif show_stderr:
+        stderr = None
+    else:
+        stderr = os.devnull()
+
+    # Run command.
+    proc = subprocess.Popen(cmd, stdout=stdout, stderr=stderr)
+    stdout_data, stderr_data = proc.communicate()
+    r_code = proc.returncode
+
+    # Function to format the output into a list of strings (removing the
+    # trailing blank lines).
+    def format(s):
+        rval = s.split('\n')
+        while rval and not rval[-1]:
+            del rval[-1]
+        return rval
+
+    # Return desired output.
+    rval = []
+    if return_code:
+        rval.append(r_code)
+    if return_stdout:
+        rval.append(format(stdout_data))
+    if return_stderr:
+        rval.append(format(stderr_data))
+    if len(rval) == 1:
+        return rval[0]
+    else:
+        return rval
 
 
 def verbosity_to_log_level(verbosity):
