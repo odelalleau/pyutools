@@ -51,22 +51,10 @@ def main():
                 'backup folder, are you sure you want to continue?'):
             return 1
     # Setup logger.
-    if args.verbosity == 0:
-        level = logging.ERROR
-    elif args.verbosity == 1:
-        level = logging.INFO
-    elif args.verbosity == 2:
-        level = logging.DEBUG
-    else:
-        raise ValueError('Invalid value for verbosity: %s' % args.verbosity)
-    if args.log is None:
-        out = sys.stdout
-    else:
-        out = args.log
     logger = pyutools.io.get_logger(
             name='pyutools.misc.scripts.restore_backup',
-            out=out,
-            level=level)
+            out=sys.stdout if args.log is None else args.log,
+            level=pyutools.misc.util.verbosity_to_log_level(args.verbosity))
     # Verify that archive is empty.
     if args.archive is not None:
         assert os.path.isdir(args.archive)
