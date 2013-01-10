@@ -95,7 +95,7 @@ def analyze_branches(logger, clean_up=False, clean_up_idx_0=True):
                         'Found branch \'%s\' that is probably a leftover '
                         'from a previous flattening attempt. Please run this '
                         'script with the --clean option to delete it, or '
-                        'do it manually.')
+                        'do it manually.' % branch)
     return current_branch
 
 
