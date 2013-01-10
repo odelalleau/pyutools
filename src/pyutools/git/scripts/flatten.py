@@ -142,6 +142,7 @@ def _flatten(start, end, state):
 
     # Helper function to create a new branch with a unique name.
     def make_new_branch(commit):
+        logger.debug('Creating new branch #%s' % state.branch_idx)
         name = 'flatten_tmp_branch_%s' % state.branch_idx
         execute('git checkout -b %s %s' % (name, commit),
                 must_succeed=True)
@@ -212,7 +213,8 @@ def _flatten(start, end, state):
         assert child.parents
         if len(child.parents) == 1:
             # This is not a merge commit: apply it.
-            execute('git cherry-pick %s' % child.hash, must_succeed=True)
+            logger.debug('Cherry-picking %s' % child.hash)
+            my_exec('git cherry-pick --allow-empty %s' % child.hash)
             # Ensure end result is as expected.
             assert execute('git diff --quiet %s' % child.hash) == 0
         else:
@@ -267,8 +269,13 @@ def _flatten(start, end, state):
                     my_exec(['git', 'commit', '-a', '-m',
                              'Automated recovery from unexpected rebase '
                              'result'])
-                    # No there should be no more diff.
-                    assert execute('git diff --quiet %s' % child.hash) == 0
+                    # Now there should be no more diff.
+                    if execute('git diff --quiet %s' % child.hash) != 0:
+                        raise RuntimeError(
+                            'There remain changes after attempted recovery. '
+                            'The current head is %s, and differs from %s' %
+                            (get_current_head(), child.hash))
+
             else:
                 logger.debug('Rebase failed -- rolling back')
                 my_exec('git rebase --abort')
@@ -288,12 +295,14 @@ def _flatten(start, end, state):
                 my_exec('git checkout %s' % work_branch)
                 # Instead build a patch with the diff.
                 logger.debug('Building patch')
-                diff = my_exec('git diff --full-index --binary %s %s' %
+                diff = my_exec('git diff --full-index --binary %s..%s' %
                                (head.hash, child.hash))
                 diff_f_name = '.tmp.flatten_patch'
                 diff_file = open(diff_f_name, 'w')
                 try:
-                    diff_file.write('\n'.join(diff) + '\n')
+                    # Note the last empty line to ensure binary diffs are not
+                    # corrupted.
+                    diff_file.write('\n'.join(diff) + '\n\n')
                 finally:
                     diff_file.close()
                 patch_success = False
