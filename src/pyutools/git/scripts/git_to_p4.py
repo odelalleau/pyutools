@@ -32,7 +32,7 @@ Add new Git commits into Perforce history.
 """
 
 
-import argparse
+#import argparse
 import logging
 import os
 import shutil
@@ -65,6 +65,14 @@ def parse_arguments():
 
     :return: Parsed arguments.
     """
+    return util.Storage(
+            verbosity=2,
+            log=None,
+            git_repo='/home/perforce/ubi_sync/ubi_test_p4',
+            git_branch='b1',
+            p4_branch='master',
+            )
+
     parser = argparse.ArgumentParser(
             description=(
                 'Move new Git commits into Perforce history.'))
@@ -75,8 +83,9 @@ def parse_arguments():
                         help='Output to this log file instead of stdout')
     parser.add_argument('--git-repo', help='Path to the Git repository')
     parser.add_argument('--git-branch', help='Git branch to add to Perforce')
-    parser.add_argument('--p4-branch', help='Perforce branch that should receive the '
-                                     'content of the Git branch')
+    parser.add_argument('--p4-branch',
+                        help='Perforce branch (as renamed by git-p4) that '
+                             'should receive the content of the Git branch')
 
     return parser.parse_args()
 
