@@ -39,8 +39,24 @@ import logging
 import subprocess
 
 
+class ExecuteError(Exception):
+    """
+    Raised by `execute` when `must_succeed` is True and the command fails.
+    """
+
+
+class Storage(object):
+
+    """
+    Basic container class.
+    """
+
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
 def execute(cmd, return_code=True, return_stdout=False, return_stderr=False,
-            show_stdout=True, show_stderr=True):
+            show_stdout=True, show_stderr=True, must_succeed=False):
     """
     Run a system command.
 
@@ -61,6 +77,11 @@ def execute(cmd, return_code=True, return_stdout=False, return_stderr=False,
     :param show_stderr: Whether the command's stderr should be printed to the
     standard output. Automatically set to False when `return_stderr` is True.
 
+    :param must_succeed: When True, automatically sets return_code=False and
+    return_stdout=True. If the command's return code is non-zero, an
+    ExecuteError exception is raised. This is useful for commands that are
+    expected to succeed, for which we just need the output.
+
     :return: If only one of the `return_*` arguments is True, then the
     corresponding item is returned. If multiple `return_*` arguments are True,
     then return a list with the corresponding items. The order of the items is
@@ -73,6 +94,9 @@ def execute(cmd, return_code=True, return_stdout=False, return_stderr=False,
                         'strings')
     if isinstance(cmd, basestring):
         cmd = cmd.split(' ')
+    if must_succeed:
+        return_code = False
+        return_stdout = True
     # Set up the stdout / stderr for this command.
     if return_stdout:
         stdout = subprocess.PIPE
@@ -91,6 +115,11 @@ def execute(cmd, return_code=True, return_stdout=False, return_stderr=False,
     proc = subprocess.Popen(cmd, stdout=stdout, stderr=stderr)
     stdout_data, stderr_data = proc.communicate()
     r_code = proc.returncode
+
+    # Failure condition.
+    if must_succeed and r_code != 0:
+        raise ExecuteError('Command failure with return code %s: %s' %
+                           (r_code, cmd))
 
     # Function to format the output into a list of strings (removing the
     # trailing blank lines).
