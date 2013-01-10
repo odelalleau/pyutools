@@ -27,6 +27,17 @@
 __all__ = []
 
 
+"""
+This script is used to flatten (= linearize) the history of a Git repository.
+
+It relies heavily on Git's "rebase" mechanism to attempt to rebase parallel
+branches on top of each other. When this is not possible due to conflicts, an
+"aggregated" commit is automatically generated to represent the merge (and the
+descriptions of all commits being aggregated are saved in this commit's
+description).
+"""
+
+
 import argparse
 import logging
 import os
@@ -410,7 +421,9 @@ def parse_arguments():
     parser = argparse.ArgumentParser(
             description=(
                 'Flatten Git history. This script must be run from the root '
-                'directory of a Git repository.'))
+                'directory of a Git repository, while on the branch to be '
+                'linearized (this branch will not be modified in the '
+                'process).'))
     parser.add_argument('--verbosity',
                         help='Verbosity level (0 to 2, default 1)',
                         type=int, default=1)
