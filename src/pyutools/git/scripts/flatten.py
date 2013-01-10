@@ -110,6 +110,13 @@ def flatten(start, end, state):
     linearizing this huge branch. Such "recursivization" is left for future
     work.
 
+    Another way to improve this function would be to have a smarter algorithm
+    to choose which branch to follow when building the flattened history.
+    Currently we use git's so-called "topological order", which seems to favor
+    the master branch in a typical "merge to master" scenario, but it may not
+    necessarily be guaranteed, nor the best way to go. See this discussion:
+        http://www.kerneltrap.org/mailarchive/git/2006/2/13/200897/thread
+
     Before exiting, this function always restores the original branch found
     in `state.origin` (even if an exception is raised).
 
