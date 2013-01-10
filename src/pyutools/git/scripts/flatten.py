@@ -60,8 +60,13 @@ def analyze_branches(logger, clean_up=False, clean_up_idx_0=True):
     for branch in branches:
         is_current = branch.startswith('*')
         if is_current:
+            if 'no branch' in branch:
+                raise RuntimeError(
+                        'You are not currently on a branch. You need to be '
+                        'on a branch to run this script.')
             branch = branch[1:]
             current_branch = branch.strip()
+        assert 'no branch' not in branch
         branch = branch.strip()
         template = 'flatten_tmp_branch_'
         if branch.startswith(template):
@@ -145,6 +150,7 @@ def _flatten(start, end, state):
                                      return_stdout=True,
                                      return_stderr=True)
     if r_code == 0:
+        assert execute('git diff --quiet %s' % end) == 0
         logger.debug('Rebase successful!')
         return base_branch
 
@@ -200,6 +206,8 @@ def _flatten(start, end, state):
         if len(child.parents) == 1:
             # This is not a merge commit: apply it.
             execute('git cherry-pick %s' % child.hash, must_succeed=True)
+            # Ensure end result is as expected.
+            assert execute('git diff --quiet %s' % child.hash) == 0
         else:
             if len(child.parents) > 2:
                 raise NotImplementedError(
@@ -215,8 +223,8 @@ def _flatten(start, end, state):
             # Attempt to rebase the other parent on top of the current head.
             # We do this in a new branch whose head is the other parent.
             execute('git branch -D %s' % rebase_branch, must_succeed=True)
-            logger.debug('Attempting to rebase %s on top of %s' %
-                         (other.hash, head.hash))
+            logger.debug('Attempting to rebase %s on top of %s to yield %s' %
+                         (other.hash, head.hash, child.hash))
             execute('git checkout -b %s %s' % (rebase_branch, other.hash),
                     must_succeed=True)
             r_code, stdout, stderr = execute(
@@ -227,11 +235,33 @@ def _flatten(start, end, state):
                 # Apply resulting commits on top of current head of the work
                 # branch.
                 # First we obtain these commits.
+                rebase_head = get_current_head()
                 to_apply = execute('git rev-list --reverse HEAD ^%s' %
                                    head.hash, must_succeed=True)
                 execute('git checkout %s' % work_branch, must_succeed=True)
                 for commit in to_apply:
                     execute('git cherry-pick %s' % commit, must_succeed=True)
+                # It can happen that the end result is not as expected. This
+                # is the case when 'rebase' and 'merge' both succeed without
+                # conflict and yet give different results. Another situation is
+                # when the merge commit contains some manual changes.
+                has_diff = execute('git diff --quiet %s' % child.hash)
+                if has_diff != 0:
+                    logger.debug(
+                        'Rebase + cherry-pick did not yield the expected '
+                        'result: it yielded %s while the expected result was '
+                        '%s (the rebased branch can be found at %s)' %
+                        (get_current_head(), child.hash, rebase_head))
+                    logger.debug('Adding a new commit to fix this situation')
+                    # In such a situation, we add a new commit to fix it.
+                    # First set working directory to its expected state.
+                    my_exec('git checkout %s .' % child.hash)
+                    # Then commit the change.
+                    my_exec(['git', 'commit', '-a', '-m',
+                             'Automated recovery from unexpected rebase '
+                             'result'])
+                    # No there should be no more diff.
+                    assert execute('git diff --quiet %s' % child.hash) == 0
             else:
                 logger.debug('Rebase failed -- rolling back')
                 my_exec('git rebase --abort')
@@ -259,14 +289,26 @@ def _flatten(start, end, state):
                     diff_file.write('\n'.join(diff) + '\n')
                 finally:
                     diff_file.close()
+                patch_success = False
                 try:
                     # Apply the patch.
-                    logger.debug('Applying patch')
-                    r_code = execute('git apply --check %s' % diff_f_name)
+                    if diff:
+                        logger.debug('Applying patch')
+                        r_code = execute('git apply --check %s' % diff_f_name)
+                    else:
+                        logger.debug('Patch is empty: skipping it')
+                        r_code = 0
+                    head_before = get_current_head()
                     if r_code != 0:
-                        raise RuntimeError('Merge patch cannot be applied')
-                    my_exec('git apply --index %s' % diff_f_name)
-                    logger.debug('Patch successfully applied, committing it')
+                        raise RuntimeError(
+                            'Merge patch cannot be applied on top of %s' %
+                            head_before)
+                    if diff:
+                        my_exec('git apply --index %s' % diff_f_name)
+                        logger.debug(
+                                   'Patch successfully applied, committing it')
+                    else:
+                        logger.debug('Committing an empty commit')
                     commit_f_name = '.tmp.flatten_msg'
                     commit_file = open(commit_f_name, 'w')
                     try:
@@ -279,15 +321,35 @@ def _flatten(start, end, state):
                     finally:
                         commit_file.close()
                     try:
-                        my_exec('git commit -F %s' % commit_f_name)
+                        my_exec('git commit --allow-empty -F %s' %
+                                commit_f_name)
                     finally:
                         os.remove(commit_f_name)
+                    # Ensure the end result is the one expected.
+                    has_diff = execute('git diff --quiet %s' % child.hash)
+                    if has_diff != 0:
+                        # The patch did not yield the expected result.
+                        raise RuntimeError(
+                            'Patch was applied on %s but did not work as '
+                            'expected.\n'
+                            'It yielded %s while the expected result was %s' %
+                            (head_before, get_current_head(), child.hash))
+
+                    patch_success = True
                 finally:
-                    os.remove(diff_f_name)
+                    if patch_success:
+                        os.remove(diff_f_name)
         # Update current head.
         head = child
        
     return work_branch
+
+
+def get_current_head():
+    """
+    Return hash of the current HEAD commit.
+    """
+    return my_exec('git rev-list HEAD -n 1')[0]
 
 
 def get_root_commits():
@@ -385,7 +447,7 @@ def run(args, logger):
 
     # Flatten from first commit to HEAD.
     state = util.Storage(logger=logger, branch_idx=1, origin=current_branch)
-    flattened_branch = flatten(root, 'HEAD', state)
+    flattened_branch = flatten(root, get_current_head(), state)
     # Save the result and clean up temporary work branch.
     if flattened_branch is not None:
         my_exec('git checkout -b flatten_tmp_branch_0 %s' %
