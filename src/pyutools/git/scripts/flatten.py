@@ -270,19 +270,27 @@ def _flatten(start, end, state):
                 # when the merge commit contains some manual changes.
                 has_diff = execute('git diff --quiet %s' % child.hash)
                 if has_diff != 0:
+                    cherry_head = get_current_head()
                     logger.debug(
                         'Rebase + cherry-pick did not yield the expected '
                         'result: it yielded %s while the expected result was '
                         '%s (the rebased branch can be found at %s)' %
-                        (get_current_head(), child.hash, rebase_head))
+                        (cherry_head, child.hash, rebase_head))
                     logger.debug('Adding a new commit to fix this situation')
                     # In such a situation, we add a new commit to fix it.
-                    # First set working directory to its expected state.
-                    exec_out('git checkout %s .' % child.hash)
-                    # Then commit the change.
-                    exec_out(['git', 'commit', '-a', '-m',
-                             'Automated recovery from unexpected rebase '
-                             'result'])
+                    # First set working directory to its expected state. This
+                    # is a bit tricy because 'git checkout X -- .' does not
+                    # always work with files being moved around. Thus achieve
+                    fix_branch = make_new_branch(child.hash)
+                    exec_out('git reset %s' % cherry_head)
+                    exec_out('git add -A')
+                    exec_out(['git', 'commit', '-m', 'Automated recovery from '
+                              'unexpected rebase result'])
+                    exec_out('git checkout %s' % work_branch)
+                    exec_out('git reset --hard %s' % fix_branch)
+                    exec_out('git branch -D %s' % fix_branch)
+                    # Repository should be clean.
+                    assert not exec_out('git status --porcelain')
                     # Now there should be no more diff.
                     if execute('git diff --quiet %s' % child.hash) != 0:
                         raise RuntimeError(
@@ -293,21 +301,26 @@ def _flatten(start, end, state):
             else:
                 logger.debug('Rebase failed -- rolling back')
                 exec_out('git rebase --abort')
-                # We re-run a dummy rebase that solves conflicts in a very
-                # stupid way (always keeping the rebased branch's commits),
-                # so as to be able to gather the list of commits being
-                # considered. We will combine their commit notes in the
-                # patch being committed.
-                # TODO This can probably be obtained in a simpler way through
-                # a command of the form ``git -rev-list --left-right A...B``
-                # but for now we are keeping this version since it seems to
-                # work (however the current version provides useless commit
-                # hashes in the logs).
-                logger.debug('Dummy rebase to gather list of commits')
-                exec_out('git rebase -X theirs %s' % head.hash)
-                patch_info = exec_out('git log %s..HEAD' % head.hash)
+                # We use the so-called "symmetric difference" to figure out
+                # which commits are being included in the merge, in order to
+                # build an informative log message.
+                cmd = 'git rev-list --left-only --graph '
+                c_range = ' %s...%s' % (other.hash, head.hash)
+                short_info = exec_out(cmd + '--oneline' + c_range)
+                full_info = exec_out(cmd + '--pretty=fuller' + c_range)
+                patch_info = [
+                    'Automatic patch built from combined commits',
+                    '',
+                    'This patch is made of the following commits (the full '
+                    'description\nfollows the short summary):',
+                    ''] + short_info + [
+                    '',
+                    '',
+                    'Full information about combined commits:',
+                    ''] + full_info
+                # Restore work branch.
                 exec_out('git checkout %s' % work_branch)
-                # Instead build a patch with the diff.
+                # Build a patch with the diff.
                 logger.debug('Building patch')
                 diff = exec_out('git diff --full-index --binary %s..%s' %
                                (head.hash, child.hash))
@@ -342,12 +355,7 @@ def _flatten(start, end, state):
                     commit_f_name = '.tmp.flatten_msg'
                     commit_file = open(commit_f_name, 'w')
                     try:
-                        commit_file.write(
-                            'Automatic patch built from combined commits\n'
-                            '\n'
-                            'This patch is made of the following commits:\n'
-                            '\n' +
-                            '\n'.join(patch_info) + '\n')
+                        commit_file.write('\n'.join(patch_info))
                     finally:
                         commit_file.close()
                     try:
@@ -463,6 +471,7 @@ def run(args, logger):
     # Ensure there is no leftover branch from a previous flattening attempt,
     # cleaning them as necessary.
     current_branch = analyze_branches(logger, clean_up=args.clean)
+    logger.debug('Current branch is: %s' % current_branch)
     assert current_branch is not None
 
     # Identify the repository root. Currently we only support a single root.
