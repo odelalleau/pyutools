@@ -29,6 +29,65 @@ __all__ = []
 
 """
 Synchronize Git and P4 repositories.
+
+IMPORTANT: When running, this script assumes that it is the only one modifying
+the local Git repository and P4 workspace. Violating this assumption may lead
+to unexpected results, possibly including permanent loss of data or corrupted
+repositories.
+
+This script requires a working Git <-> P4 setup to be already established with
+the 'git p4' utility. Its goal is to merge (actually rebase) a remote Git
+branch on top of the current P4 head. It differs from the basic usage of
+'git p4' in the following ways:
+
+    1. It takes changes from another branch instead of the current P4 branch.
+    2. This branch is obtained from a remote repository instead of being local.
+    3. Commits from P4 are pushed back to the remote repository.
+    4. It preserves author names in the Git repository without requiring P4
+       admin priviledges.
+
+Because of point 3, this script can also be used to simply update a remote Git
+repository with the latest P4 commits (see below for an example).
+
+For this script to work the Git remote repository must have at least these
+two branches:
+    - A "feature branch" which is the branch whose commits we wish to add to
+      the P4 history (option --git-branch)
+    - A "mirror branch" which is meant to always be mirroring the P4 history
+      (option --p4-branch).
+Typically, the "feature branch" was branched from an earlier state of the
+"mirror branch".
+
+This script's simplified workflow is as follows:
+
+              1. Import Git update <-- Git remote feature branch
+P4 server --> 2. Import P4 update
+              3. Perform rebase
+P4 server <-- 4. Submit to P4
+              5. Push to Git       --> Git remote feature & mirror branches
+
+Note in particular that the Git remote feature branch is overridden by this
+script with the rebased branch (when successful), to reduce the risk of people
+accidentally using the old (outdated) feature branch.
+
+RETURN VALUE:
+    0 = success
+    1 = the remote feature branch cannot be automatically rebased (it needs
+        to be manually rebased and re-submitted)
+    2 = unexpected error (see logs for more information)
+
+EXAMPLES:
+
+Note that these examples omit the "--git-repo" option, which is mandatory in
+practice.
+
+* To add remote feature branch "my_feature" to the "v1.5" branch, use:
+
+    git_p4_sync.py --git-branch=my_feature --p4-branch=v1.5
+
+* To only update the mirror branch "master" with latest P4 code, use:
+
+    git_p4_sync.py --git-branch=master --p4-branch=master
 """
 
 
@@ -117,6 +176,8 @@ def main():
                 out=sys.stdout if args.log is None else args.log,
                 level=util.verbosity_to_log_level(args.verbosity))
         return run(args)
+    except SystemExit:
+        raise
     except:
         msg = ('Exception raised:\n%s' %
                '\n'.join(traceback.format_exception(*sys.exc_info())))
@@ -135,17 +196,22 @@ def parse_arguments():
     """
     parser = argparse.ArgumentParser(
             description=(
-                'Synchronize Git repository with P4 repository'))
+                'Synchronize Git and P4 repositories. See in-file docstring '
+                'for more details and examples.'))
     parser.add_argument('--verbosity',
                         help='Verbosity level (0 to 2, default 1)',
                         type=int, default=1)
     parser.add_argument('--log',
                         help='Output to this log file instead of stdout')
-    parser.add_argument('--git-repo', help='Path to the Git repository')
-    parser.add_argument('--git-branch', help='Git branch to add to Perforce')
-    parser.add_argument('--p4-branch',
-                        help='Perforce branch (as renamed by git-p4) that '
-                             'should receive the content of the Git branch')
+    parser.add_argument('--remote', default='origin',
+                        help='Name of remote repository (default: origin)')
+    parser.add_argument('--git-repo', help='Path to local Git repository',
+                        required=True)
+    parser.add_argument('--git-branch',
+                         help='Remote feature branch to merge into P4',
+                        required=True)
+    parser.add_argument('--p4-branch', required=True,
+                        help='Remote mirror branch of the P4 branch')
 
     return parser.parse_args()
 
@@ -158,7 +224,7 @@ def run(args):
 
     :return: See documentation of `main()` function.
     """
-    logger.info('Command arguments are: %s' % sys.argv)
+    logger.debug('Command arguments are: %s' % sys.argv)
 
     # Ensure no slash in branch names (untested).
     assert '/' not in args.git_branch and '/' not in args.p4_branch
@@ -183,22 +249,22 @@ def run(args):
         # Switch to desired P4 target branch.
         exec_out('git checkout %s' % args.p4_branch)
 
-        # Fetch from origin.
-        exec_out('git fetch origin')
+        # Fetch from remote.
+        exec_out('git fetch %s' % args.remote)
 
-        # Ensure we are in synch with origin. Usually this should always be the
+        # Ensure we are in synch with remote. Usually this should always be the
         # case, unless a previous synchronization attempt was interrupted in
         # a non-clean state.
         head_before = get_current_head()
-        exec_out('git reset --hard origin/%s' % args.p4_branch)
+        exec_out('git reset --hard %s/%s' % (args.remote, args.p4_branch))
         # Known head of the P4 branch before we start synchronization.
         p4_init_head = get_current_head()
         if p4_init_head != head_before:
             logger.warning(
-                'The %s local branch had to be reset to origin/%s. It is '
+                'The %s local branch had to be reset to %s/%s. It is '
                 'suspicious that they were out of synch: is it because of '
                 'a previous script failure?' %
-                (args.p4_branch, args.p4_branch))
+                (args.p4_branch, args.remote, args.p4_branch))
 
         # Fetch from P4.
         exec_out('git p4 sync')
@@ -206,10 +272,10 @@ def run(args):
         # Perform local update (should be a straight fast-forward update).
         exec_out('git p4 rebase')
         if get_current_head() != p4_init_head:
-            # New commits from P4: push them to origin.
+            # New commits from P4: push them to remote.
             logger.debug('Pushing new commits from P4 -> Git')
-            exec_out('git push origin %s:%s' %
-                     (args.p4_branch, args.p4_branch))
+            exec_out('git push %s %s:%s' %
+                     (args.remote, args.p4_branch, args.p4_branch))
         else:
             logger.debug('No new commits from P4')
         p4_cur_head = get_current_head()
@@ -230,17 +296,17 @@ def run(args):
         assert remote_p4_branch is not None
 
         # This is the branch we want to add to P4.
-        orig_branch = 'origin/%s' % args.git_branch
+        remo_branch = '%s/%s' % (args.remote, args.git_branch)
 
         # Create temporary work branch.
         work_branch = 'git_to_p4_tmp'
         if exec_code('git checkout %s' % work_branch) == 0:
             # This means the work branch already exists (leftover from a
             # previous failed call): we just reset it.
-            exec_out('git reset --hard %s' % orig_branch)
+            exec_out('git reset --hard %s' % remo_branch)
         else:
             # This means the work branch does not exist yet, so we create it.
-            exec_out('git checkout -b %s %s' % (work_branch, orig_branch))
+            exec_out('git checkout -b %s %s' % (work_branch, remo_branch))
 
         # Attempt to rebase on top of P4 head.
         if exec_code('git rebase %s' % args.p4_branch) != 0:
@@ -330,12 +396,12 @@ export GIT_AUTHOR_EMAIL="$am"
                      (remote_p4_branch, 'HEAD'))
 
             # Now we can push the result.
-            exec_out('git push origin %s:%s' %
-                     (args.p4_branch, args.p4_branch))
+            exec_out('git push %s %s:%s' %
+                     (args.remote, args.p4_branch, args.p4_branch))
             # We also push to the branch that we merged, to ensure users do not
             # accidentally work on an outdated branch.
-            exec_out('git push --force origin %s:%s' %
-                     (args.p4_branch, args.git_branch))
+            exec_out('git push --force %s %s:%s' %
+                     (args.remote, args.p4_branch, args.git_branch))
             logger.info('Successfully synchronized Git <-> P4 repositories')
             return 0
 
@@ -355,18 +421,18 @@ export GIT_AUTHOR_EMAIL="$am"
                 logger.debug('Attempting to rebase on top of remote P4 branch '
                              'to validate the conflict situation')
                 exec_out('git checkout -b %s' % work_branch)
-                exec_out('git reset --hard %s' % orig_branch)
+                exec_out('git reset --hard %s' % remo_branch)
                 r_code = exec_code('git rebase %s' % remote_p4_branch)
                 can_explain_failure = (r_code != 0)
             if can_explain_failure:
-                # Update P4 branch and push to origin repository before
+                # Update P4 branch and push to remote repository before
                 # failing.
                 logger.debug('Conflict situation validated: aborting')
                 exec_out('git rebase --abort')
                 exec_out('git checkout %s' % args.p4_branch)
                 exec_out('git p4 rebase')
-                exec_out('git p4 push origin %s:%s' %
-                         (args.p4_branch, args.p4_branch))
+                exec_out('git p4 push %s %s:%s' %
+                         (args.remote, args.p4_branch, args.p4_branch))
                 logger.info('Unable to rebase branch on top of P4 head, '
                             'please rebase manually then try again')
                 return 1
