@@ -99,16 +99,27 @@ def main():
     """
     Executable entry point.
 
-    :return: 0 on success, non-zero on failure.
+    :return: An integer among:
+        0: success
+        1: the Git branch needs to be manually rebased on the updated P4 branch
+        2: unexpected error (check logs for more details)
     """
-    args = parse_arguments()
     global logger
-    logger = pyutools.io.get_logger(
-            name='pyutools.git.scripts.git_to_p4',
-            out=sys.stdout if args.log is None else args.log,
-            level=util.verbosity_to_log_level(args.verbosity))
-    rval = run(args)
-    return rval
+    try:
+        args = parse_arguments()
+        logger = pyutools.io.get_logger(
+                name='pyutools.git.scripts.git_to_p4',
+                out=sys.stdout if args.log is None else args.log,
+                level=util.verbosity_to_log_level(args.verbosity))
+        return run(args)
+    except:
+        msg = ('Exception raised:\n%s' %
+               '\n'.join(traceback.format_exception(*sys.exc_info())))
+        if logger is None:
+            print msg
+        else:
+            logger.error(msg)
+        return 2
 
 
 def parse_arguments():
@@ -140,23 +151,7 @@ def run(args):
 
     :param args: Object holding (parsed) arguments.
 
-    :return: The return value is an integer among:
-        0: success
-        1: the Git branch needs to be manually rebased on the updated P4 branch
-        2: unexpected error (check logs for more details)
-    """
-    # Wrapper around `_run` to catch errors.
-    try:
-        return _run(args)
-    except:
-        logger.error('Exception raised:\n%s' %
-                     '\n'.join(traceback.format_exception(*sys.exc_info())))
-        return 2
-
-
-def _run(args):
-    """
-    Actual implementation of the `run` function.
+    :return: See documentation of `main()` function.
     """
     logger.info('Command arguments are: %s' % sys.argv)
 
