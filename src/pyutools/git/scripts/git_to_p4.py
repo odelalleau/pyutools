@@ -106,7 +106,7 @@ def main():
     logger = pyutools.io.get_logger(
             name='pyutools.git.scripts.git_to_p4',
             out=sys.stdout if args.log is None else args.log,
-            level=pyutools.misc.util.verbosity_to_log_level(args.verbosity))
+            level=util.verbosity_to_log_level(args.verbosity))
     rval = run(args)
     return rval
 
