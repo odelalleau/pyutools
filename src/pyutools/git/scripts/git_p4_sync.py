@@ -162,13 +162,32 @@ def run(args):
     try:
         # Move to the git repository folder.
         os.chdir(args.git_repo)
+
         # Ensure git repository is clean.
         assert not exec_out('git status --porcelain'), 'Need clean repository'
+
         # Switch to desired P4 target branch.
         exec_out('git checkout %s' % args.p4_branch)
+
+        # Fetch from origin.
+        exec_out('git fetch origin')
+
+        # Ensure we are in synch with origin. Usually this should always be the
+        # case, unless a previous synchronization attempt was interrupted in
+        # a non-clean state.
+        head_before = get_current_head()
+        exec_out('git reset --hard origin/%s' % args.p4_branch)
+        # Known head of the P4 branch before we start synchronization.
         p4_init_head = get_current_head()
+        if p4_init_head != head_before:
+            logger.warning(
+                'The %s local branch had to be reset to origin/%s. It is '
+                'suspicious that they were out of synch: is it because of '
+                'a previous script failure?')
+
         # Fetch from P4.
         exec_out('git p4 sync')
+
         # Perform local update (should be a straight fast-forward update).
         exec_out('git p4 rebase')
         if get_current_head() != p4_init_head:
@@ -179,11 +198,26 @@ def run(args):
         else:
             logger.debug('No new commits from P4')
         p4_cur_head = get_current_head()
-        # Fetch from origin.
-        exec_out('git fetch origin')
+
+        # Find the remote P4 branch.
+        # Note that the master is typically p4/master, but other branches can
+        # be of the form p4/some_dir/another_branch (the reason for this
+        # difference is unknown).
+        remote_p4_branch = None
+        for branch in exec_out('git branch -r'):
+            branch = branch.strip()
+            if (branch.endswith('/%s' % args.p4_branch) and
+                branch.startswith('p4/') and
+                '->' not in branch):
+                # Found it.
+                assert remote_p4_branch is None
+                remote_p4_branch = branch
+        assert remote_p4_branch is not None
+
         # This is the branch we want to add to P4.
         orig_branch = 'origin/%s' % args.git_branch
-        # Create temporary work branch to work into.
+
+        # Create temporary work branch.
         work_branch = 'git_to_p4_tmp'
         if exec_code('git checkout %s' % work_branch) == 0:
             # This means the work branch already exists (leftover from a
@@ -192,6 +226,7 @@ def run(args):
         else:
             # This means the work branch does not exist yet, so we create it.
             exec_out('git checkout -b %s %s' % (work_branch, orig_branch))
+
         # Attempt to rebase on top of P4 head.
         if exec_code('git rebase %s' % args.p4_branch) != 0:
             # Failed rebase: rollback and exit.
@@ -200,14 +235,17 @@ def run(args):
                         'rebase manually then try again')
             return 1
         logger.debug('Rebase successful')
+
         # Get changes into P4 branch.
         exec_out('git checkout %s' % args.p4_branch)
         exec_out('git reset --hard %s' % work_branch)
+
         # Submit to P4. Note that it might still fail if a very recent P4
         # commit just introduced a conflict.
         r_code, stdout, stderr = exec_all('git p4 submit')
+
         if r_code == 0:
-            # Push to origin.
+            # Success: push to origin.
             exec_out('git push origin %s:%s' %
                      (args.p4_branch, args.p4_branch))
             # We also push to the branch that we merged, to ensure users do not
@@ -216,43 +254,27 @@ def run(args):
                      (args.p4_branch, args.git_branch))
             logger.info('Successfully updated P4 repository')
             return 0
+
         else:
             logger.debug('Submit failed, resetting repo state')
             # Reset state of the repo.
             exec_out('git reset --hard %s' % p4_cur_head)
-            # Verify that there is indeed a conflict when trying to rebase on
-            # top of the current known state of the remote P4 branch. If this
-            # is not the case, there must be another problem.
-            logger.debug('Attempting to rebase on top of remote P4 branch to '
-                         'validate the conflict situation')
-            exec_out('git checkout -b %s' % work_branch)
-            exec_out('git reset --hard %s' % orig_branch)
-            # We need to figure out which branch is the remote P4 branch.
-            remote_p4_branch = None
-            for branch in exec_out('git branch -r'):
-                branch = branch.strip()
-                if (branch.endswith('/%s' % args.p4_branch) and
-                    branch.startswith('p4/') and
-                    '->' not in branch):
-                    # Note that for some unknown reason, the master is:
-                    #   p4/master
-                    # while another branch can be
-                    #   p4/some_dir/another_branch
-                    assert remote_p4_branch is None
-                    remote_p4_branch = branch
-            assert remote_p4_branch is not None
-            r_code = exec_code('git rebase %s' % remote_p4_branch)
-            if r_code == 0:
-                # Rebase succeeded: something must be wrong!
-                logger.warning(
-                    'Submission failed unexpectedly.\n'
-                    'The stdout output is:\n'
-                    '%s\n\n'
-                    'The stderr output is:\n'
-                    '%s' % (stdout, stderr))
-                raise RuntimeError(
-                    '\'git p4 submit\' failed even though \'git rebase\' worked')
-            else:
+            # Verify that:
+            #   1. The remote P4 branch has indeed been updated, and
+            #   2. There is indeed a conflict when trying to rebase on
+            #      top of its new head.
+            # If this is not the case, there must be another problem.
+            can_explain_failure = False
+            new_remote_p4_head = exec_out(
+                                'git rev-list %s -n 1' % remote_p4_branch)[0]
+            if new_remote_p4_head != p4_cur_head:
+                logger.debug('Attempting to rebase on top of remote P4 branch '
+                             'to validate the conflict situation')
+                exec_out('git checkout -b %s' % work_branch)
+                exec_out('git reset --hard %s' % orig_branch)
+                r_code = exec_code('git rebase %s' % remote_p4_branch)
+                can_explain_failure = (r_code != 0)
+            if can_explain_failure:
                 # Update P4 branch and push to origin repository before
                 # failing.
                 logger.debug('Conflict situation validated: aborting')
@@ -264,6 +286,17 @@ def run(args):
                 logger.info('Unable to rebase branch on top of P4 head, '
                             'please rebase manually then try again')
                 return 1
+            else:
+                # Rebase is possible: something else must be wrong.
+                logger.warning(
+                    'Submission failed unexpectedly.\n'
+                    'The stdout output is:\n'
+                    '%s\n\n'
+                    'The stderr output is:\n'
+                    '%s' % (stdout, stderr))
+                raise RuntimeError(
+                    '\'git p4 submit\' failed even though it seems possible to '
+                    'rebase the submitted Git changes on top of the P4 branch')
     finally:
         os.chdir(cwd)
 
