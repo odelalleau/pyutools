@@ -56,9 +56,14 @@ def exec_out(cmd):
     The stderr output is ignored (only logged in debug mode).
     """
     logger.debug('Running command: %s' % cmd)
-    stdout, stderr = execute(cmd, must_succeed=True, return_stderr=True)
+    r_code, stdout, stderr = execute(cmd, return_stdout=True,
+                                     return_stderr=True)
+    if stdout:
+        logger.debug('Command stdout: %s' % stdout)
     if stderr:
         logger.debug('Command stderr: %s' % stderr)
+    if r_code != 0:
+        raise RuntimeError('Non-zero return code in command: %s' % cmd)
     return stdout
 
 
@@ -166,6 +171,15 @@ def run(args):
         # Ensure git repository is clean.
         assert not exec_out('git status --porcelain'), 'Need clean repository'
 
+        # Obtain email address associated to the P4 user account.
+        p4_user_info = exec_out('p4 user -o')
+        p4_email = None
+        for line in p4_user_info:
+            if line.lower().startswith('email:'):
+                p4_email = line[len('email:'):].strip()
+        logger.debug('Obtained P4 email: %s' % p4_email)
+        assert p4_email is not None
+
         # Switch to desired P4 target branch.
         exec_out('git checkout %s' % args.p4_branch)
 
@@ -183,7 +197,8 @@ def run(args):
             logger.warning(
                 'The %s local branch had to be reset to origin/%s. It is '
                 'suspicious that they were out of synch: is it because of '
-                'a previous script failure?')
+                'a previous script failure?' %
+                (args.p4_branch, args.p4_branch))
 
         # Fetch from P4.
         exec_out('git p4 sync')
@@ -245,7 +260,76 @@ def run(args):
         r_code, stdout, stderr = exec_all('git p4 submit')
 
         if r_code == 0:
-            # Success: push to origin.
+            # Success:
+            #   1. Restore author names in Git branch.
+            #   2. Push to remote repository.
+
+            # To restore author names, we first find the match between the
+            # result of 'git p4 submit' and our local rebase. Then we alter
+            # commits to modify their authors. Finally, we update the remote
+            # tracking branch with this information.
+            git_p4_commits = exec_out('git rev-list HEAD ^%s' % p4_cur_head)
+            our_commits = exec_out('git rev-list %s ^%s' %
+                                   (work_branch, p4_cur_head))
+            our_idx = 0
+            get_commit_log = lambda commit: exec_out(
+                    # Note that we remove the first line (commit hash).
+                    'git rev-list --pretty=%s%n%b -n 1 ' + commit)[1:]
+            author = []
+            for p4_commit in git_p4_commits:
+                # Get commit message log.
+                p4_log = get_commit_log(p4_commit)
+                # Remove text added by git-p4.
+                assert p4_log[-1].startswith('[git-p4: depot-paths = ')
+                p4_log = p4_log[:-1]
+                # Also remove any trailing empty line.
+                while p4_log and not p4_log[-1]:
+                    p4_log = p4_log[:-1]
+                # Attempt to find a matching commit in our commits.
+                found = False
+                while our_idx < len(our_commits):
+                    our_commit = our_commits[our_idx]
+                    our_log = get_commit_log(our_commit)
+                    if p4_log == our_log:
+                        # Found it!
+                        found = True
+                        break
+                    # This must mean this commit has been skipped (can happen
+                    # if someone committed to P4 an identical commit).
+                    our_idx += 1
+                if found:
+                    # Obtain author information.
+                    name, email = exec_out(
+                            'git rev-list --pretty=%an%n%ae -n 1 ' +
+                            our_commit)[1:3]
+                    author.append((p4_commit, name, email))
+                else:
+                    # If we cannot find a matching commit this means we have
+                    # reached P4-specific commits.
+                    break
+            logger.debug('Author information: %s' % author)
+            # Now modify author names.
+            for commit, name, email in author:
+                logger.debug('Updating author of commit %s: %s / %s' %
+                             (commit, name, email))
+                exec_out(['git', 'filter-branch', '-f', '--env-filter', """\
+an="$GIT_AUTHOR_NAME"
+am="$GIT_AUTHOR_EMAIL"
+if [ "$GIT_AUTHOR_EMAIL" = "%s" -a "$GIT_COMMIT" = "%s" ]
+then
+an="%s"
+am="%s"
+fi
+export GIT_AUTHOR_NAME="$an"
+export GIT_AUTHOR_EMAIL="$am"
+""" % (p4_email, commit, name, email), 'HEAD', '^%s' % p4_cur_head])
+
+            # It remains to update the reference to the remote tracking branch
+            # in order to make it use the new names.
+            exec_out('git update-ref refs/remotes/%s %s' %
+                     (remote_p4_branch, 'HEAD'))
+
+            # Now we can push the result.
             exec_out('git push origin %s:%s' %
                      (args.p4_branch, args.p4_branch))
             # We also push to the branch that we merged, to ensure users do not
