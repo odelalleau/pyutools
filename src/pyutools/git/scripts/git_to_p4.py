@@ -28,7 +28,7 @@ __all__ = []
 
 
 """
-Add new Git commits into Perforce history.
+Synchronize Git and P4 repositories.
 """
 
 
@@ -130,7 +130,7 @@ def parse_arguments():
     """
     parser = argparse.ArgumentParser(
             description=(
-                'Move new Git commits into Perforce history.'))
+                'Synchronize Git repository with P4 repository'))
     parser.add_argument('--verbosity',
                         help='Verbosity level (0 to 2, default 1)',
                         type=int, default=1)
@@ -147,7 +147,7 @@ def parse_arguments():
 
 def run(args):
     """
-    Perform git -> p4 copy.
+    Perform Git <-> P4 synchronization.
 
     :param args: Object holding (parsed) arguments.
 
