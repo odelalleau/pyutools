@@ -336,7 +336,7 @@ export GIT_AUTHOR_EMAIL="$am"
             # accidentally work on an outdated branch.
             exec_out('git push --force origin %s:%s' %
                      (args.p4_branch, args.git_branch))
-            logger.info('Successfully updated P4 repository')
+            logger.info('Successfully synchronized Git <-> P4 repositories')
             return 0
 
         else:
