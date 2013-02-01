@@ -66,9 +66,11 @@ class Lock(object):
 
     The lock is associated to a location on the filesystem, which must be a
     directory (that may or may not exist already).
+
+    As it use sqlite as the back-end, this class isn't NFS safe.
     """
 
-    def __init__(self, dirname, timeout=10, refresh=None, wait=1):
+    def __init__(self, dirname, timeout=10, refresh=None, wait=1, err_if_timeout=False):
         """
         Constructor.
 
@@ -87,11 +89,15 @@ class Lock(object):
 
         :param wait: If the lock cannot be obtained immediately when calling
         `acquire()`, wait this amount of time (in seconds) before trying again.
+
+        :param err_if_timeout: If we timeout, by default we take the lock.
+        If True, we will raise an Exception.
         """
         # Parse arguments.
         self.dirname = dirname
         self.timeout = timeout
         self.wait = wait
+        self.err_if_timeout = err_if_timeout
         if refresh is None:
             if self.timeout < 0:
                 self.refresh = -1
@@ -207,6 +213,8 @@ class Lock(object):
                 # into the future, because it means they must be bugged
                 # somehow.
                 if self.timeout >= 0 and (age > self.timeout or -age > 3600):
+                    if self.err_if_error:
+                        raise LockError("timeout expired while acquiring a lock. age=%fs" % age)
                     # Delete outdated lock.
                     # Note that we specify the lock ID, because someone else
                     # may actually delete and create a new lock at the same
