@@ -124,7 +124,8 @@ def exec_out(cmd):
     if stderr:
         logger.debug('Command stderr: %s' % stderr)
     if r_code != 0:
-        raise RuntimeError('Non-zero return code in command: %s' % cmd)
+        raise RuntimeError('Non-zero return code in command: %s\nstdout: %s\nstderr: %s' % (
+                cmd, stdout, stderr))
     return stdout
 
 
