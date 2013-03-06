@@ -30,11 +30,13 @@ __all__ = []
 """
 Synchronize Git and P4 repositories.
 
-IMPORTANT: When running, this script take a lock in the the local Git
-repository as it assume to be alone to modify it. Violating this
-assumption may lead to unexpected results, possibly including
-permanent loss of data or corrupted repositories. The lock isn't NFS safe,
-so the git repository MUST be local to where this script is executed.
+IMPORTANT: When running, this script takes a lock in the local Git repository
+since it assumes to be the only one modifying it. It also assumes that noone
+else is currently modifying the P4 workspace. Violating these assumptions may
+lead to unexpected results, possibly including permanent loss of data or
+corrupted repositories. The lock is not NFS safe, so when running multiple
+instances of this script, the Git repository MUST be local to where the script
+is being executed.
 
 This script requires a working Git <-> P4 setup to be already established with
 the 'git p4' utility. Its goal is to merge (actually rebase) a remote Git
@@ -231,12 +233,13 @@ def run(args):
 
     cwd = os.getcwd()
 
+    lock = None
     try:
         # Move to the git repository folder.
         os.chdir(args.git_repo)
 
         # Wait 300s for possible long network latency.
-        lock = Lock(".git/p4_git_sync_lock/", timeout=300,
+        lock = Lock(os.path.join('.git', 'p4_git_sync_lock'), timeout=300,
                     refresh=30, err_if_timeout=True)
         lock.acquire()
 
@@ -463,7 +466,7 @@ export GIT_AUTHOR_EMAIL="$am"
                     'rebase the submitted Git changes on top of the P4 branch')
     finally:
         os.chdir(cwd)
-        if lock.locked:
+        if lock is not None and lock.locked:
             lock.release()
 
     assert False, 'This point should be unreachable'
