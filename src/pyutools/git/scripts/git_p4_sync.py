@@ -420,6 +420,9 @@ export GIT_AUTHOR_EMAIL="$am"
             # accidentally work on an outdated branch.
             exec_out('git push --force %s %s:%s' %
                      (args.remote, args.p4_branch, args.git_branch))
+            if git_p4_commits:
+                logger.info("%s new commit(s) merged from the Git branch" %
+                            len(git_p4_commits))
             logger.info('Successfully synchronized Git <-> P4 repositories')
             return 0
 
