@@ -298,10 +298,12 @@ def run(args):
                 branch.startswith('p4/') and
                 '->' not in branch):
                 # Found it.
-                assert remote_p4_branch is None, "Found multiple p4-branch: %s %s" % (
-                    remote_p4_branch, branch)
+                assert remote_p4_branch is None, (
+                       "Found multiple p4-branch: %s %s" % (remote_p4_branch,
+                                                            branch))
                 remote_p4_branch = branch
-        assert remote_p4_branch is not None, "p4-branch not found: " + p4_branch
+        assert remote_p4_branch is not None, (
+               "p4-branch not found: " + p4_branch)
 
         # This is the branch we want to add to P4.
         remo_branch = '%s/%s' % (args.remote, args.git_branch)
@@ -321,7 +323,8 @@ def run(args):
             # Failed rebase: rollback and exit.
             exec_out('git rebase --abort')
             logger.info('Unable to rebase branch on top of P4 head, please '
-                        'rebase manually the git-branch to merge, then try again')
+                        'rebase manually the git-branch to merge, then try '
+                        'again')
             return 1
         logger.debug('Rebase successful')
 
@@ -350,7 +353,7 @@ def run(args):
                     # Note that we remove the first line (commit hash).
                     'git rev-list --pretty=%s%n%b -n 1 ' + commit)[1:]
             author = []
-            if len(git_p4_commits) == 0:
+            if not git_p4_commits:
                 logger.info("No new commit in git-branch")
 
             for p4_commit in git_p4_commits:
