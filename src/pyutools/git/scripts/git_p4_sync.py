@@ -270,11 +270,25 @@ def run(args):
         # Known head of the P4 branch before we start synchronization.
         p4_init_head = get_current_head()
         if p4_init_head != head_before:
-            logger.warning(
-                'The %s local branch had to be reset to %s/%s. It is '
-                'suspicious that they were out of synch: is it because of '
-                'a previous script failure?' %
-                (args.p4_branch, args.remote, args.p4_branch))
+            commits = exec_out('git rev-list HEAD')
+            if head_before in commits:
+                #There is newer commits in git.
+                #We can't automatically repair this as the commit hash will change
+                #But we will be forced to force a push to the git remote!
+
+                #Change back to the old state to detect it next time.
+                exec_out('git reset --hard %s' % head_before)
+                raise RuntimeError(
+                    "The git remote %s/%s branch have newer commits that p4 don't know about. "
+                    "This happen if someone manually pushed to it "
+                    "or if someone click the merge button on assembla. "
+                    "We can not correct this automatically." % (args.remote,args.p4_branch))
+            else:
+                logger.warning(
+                    'The %s local branch had to be reset to %s/%s. It is '
+                    'suspicious that they were out of synch: is it because of '
+                    'a previous script failure?' %
+                    (args.p4_branch, args.remote, args.p4_branch))
 
         # Fetch from P4.
         exec_out('git p4 sync')
