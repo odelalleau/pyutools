@@ -272,17 +272,18 @@ def run(args):
         if p4_init_head != head_before:
             commits = exec_out('git rev-list HEAD')
             if head_before in commits:
-                #There is newer commits in git.
-                #We can't automatically repair this as the commit hash will change
-                #But we will be forced to force a push to the git remote!
-
-                #Change back to the old state to detect it next time.
+                # There are newer commits in git.
+                # We cannot automatically repair this since the commit hash
+                # will change, and we would need to force a push to the git
+                # remote.
+                # Change back to the old state to detect it again next time.
                 exec_out('git reset --hard %s' % head_before)
                 raise RuntimeError(
-                    "The git remote %s/%s branch have newer commits that p4 don't know about. "
-                    "This happen if someone manually pushed to it "
-                    "or if someone click the merge button on assembla. "
-                    "We can not correct this automatically." % (args.remote,args.p4_branch))
+                    "The git remote branch %s/%s has newer commits that P4 "
+                    "does not know about. This happens if someone pushed to "
+                    "this branch without using this script. You will need to "
+                    "manually reset this remote branch to commit %s." %
+                    (args.remote, args.p4_branch, head_before))
             else:
                 logger.warning(
                     'The %s local branch had to be reset to %s/%s. It is '
