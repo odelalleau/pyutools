@@ -215,6 +215,10 @@ def parse_arguments():
                         required=True)
     parser.add_argument('--p4-branch', required=True,
                         help='Remote mirror branch of the P4 branch')
+    parser.add_argument('--remove_old_lock',
+                       help='If there is an old lock (more then 5 min. old), '
+                            'remove it instead of raising an error.',
+                       action="store_true")
 
     return parser.parse_args()
 
@@ -241,7 +245,7 @@ def run(args):
 
         # Wait 300s for possible long network latency.
         lock = Lock(os.path.join('.git', 'p4_git_sync_lock'), timeout=300,
-                    refresh=30, err_if_timeout=True)
+                    refresh=30, err_if_timeout=not args.remove_old_lock)
         lock.acquire()
 
         # Ensure git repository is clean.
